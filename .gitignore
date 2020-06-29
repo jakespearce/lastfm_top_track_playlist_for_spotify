@@ -1,0 +1,10 @@
+.vscode/
+README
+create_playlist_spotify.py
+environment/
+last_fm_api_key
+last_fm_user
+spotify_account_code
+spotify_client_id
+spotify_client_secret
+spotify_user_id
