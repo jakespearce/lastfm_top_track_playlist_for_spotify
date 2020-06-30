@@ -1,20 +1,26 @@
 #!/bin/python
 
-import requests
-from datetime import date
-import calendar
-import json
 import base64
+import calendar
+from datetime import date
+import json
+import requests
 import webbrowser
-import sys
+import yaml
+
+with open('secrets.yml', 'r') as stream:
+    secrets = yaml.safe_load(stream)
 
 # spotify
-client_id = open('spotify_client_id', 'r').read()
-client_secret = open('spotify_client_secret', 'r').read()
+client_id = secrets['spotify_client_id']
+client_secret = secrets['spotify_client_secret']
 client_credentials = f'{client_id}:{client_secret}'
 client_credentials_b64 = base64.b64encode(client_credentials.encode())
 webbrowser.open(f'https://accounts.spotify.com/authorize?client_id={client_id}&response_type=code&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=playlist-modify-public')
-auth_code = input("Sign in to Spotify and approve of the app's access then after the redirect to example.com copy and paste the <code> from the uri that opens in the browser into the terminal. It will look like https://example.com...code=<code> ")
+auth_code = input('''Sign in to Spotify and approve of the app's access then 
+after the redirect to example.com copy and paste the <code> from the uri 
+that opens in the browser into the terminal. 
+It will look like https://example.com...code=<code> ''')
 redirect_uri = 'https://example.com/callback' # Same as in spotify dev dashboard
 token_url = 'https://accounts.spotify.com/api/token'
 token_data = {
@@ -33,12 +39,12 @@ client_token_header = {
 }
 
 # lastfm
-lfm_api_root = "https://ws.audioscrobbler.com/2.0/"
-lfm_api_key = open('last_fm_api_key', 'r').read()
-user = open('last_fm_user', 'r').read()
+lfm_api_root = 'https://ws.audioscrobbler.com/2.0/'
+lfm_api_key = secrets['last_fm_api_key']
+user = secrets['last_fm_user']
 # opts: 1month | 3month | 6month | 12month | overall
-period = "3month"
-limit = 50
+period = '3month'
+limit = 50 # Results displayed per page
 page = 1
 lfm_payload = {
     'method': 'user.gettoptracks',
@@ -80,7 +86,7 @@ def lfm_get_top_tracks(lfm_api_root, lfm_payload, pages, track_play_rank_lim):
         page += 1
     return artist_song
 
-def generated_playlist_name(period, date):
+def generate_playlist_name(period, date):
     period_to_delta = {
         '1month': -1,
         '3month': -3,
@@ -122,23 +128,30 @@ def get_spotify_track_uris_from(artist_song_dict):
         track_uri_list.append(r_search_result['tracks']['items'][0]['uri'])
     return track_uri_list
 
-# The user signing into spotify earlier obtained the necessary auth code for us. This auth code is used to get an access token for the user. This access token will be used later to make API requests on behalf of that user for things like playlist creation.
+'''
+The user signing into spotify earlier obtained the necessary auth code for us.
+This auth code is used to get an access token for the user.
+This access token will be used later to make API requests on behalf of that 
+user for things like playlist creation.
+'''
 def get_spotify_user_access_token():
     r = requests.post(token_url, data=token_data, headers=token_header)
     r_token_data = r.json()
     valid_request = r.status_code is 200
     if not valid_request:
-        print(f'Request is invalid on the get spotify user access token step, failing with HTTP error {r.status_code}')
-        sys.exit()
+        raise requests.HTTPError(f'''User access token request failed with 
+    HTTP error {r.status_code}.
+    Expected status code 200.''')
     access_token = r_token_data['access_token']
-    # expires and refresh unusued but can be used in future for refreshed api access as expiry is 3600s
+    # expires and refresh unusued but can be used in future for refreshed api
+    # access as expiry is 3600s
     expires_in = r_token_data['expires_in']
     refresh_token = r_token_data['refresh_token']
     scopes = r_token_data['scope']
     return access_token
 
 def create_new_sptfy_playlist_with_id(access_token, playlist_name):
-    sptfy_user_id = open('spotify_user_id', 'r').read()
+    sptfy_user_id = secrets['spotify_user_id']
     playlist_endpoint = f'https://api.spotify.com/v1/users/{sptfy_user_id}/playlists'
     playlist_data = {
         'name': playlist_name
@@ -152,8 +165,9 @@ def create_new_sptfy_playlist_with_id(access_token, playlist_name):
     r_playlist_data = r.json()
     valid_request = r.status_code is 200 or 201
     if not valid_request:
-        print(f"Playlist creation step failed with HTTP error {r.status_code}")
-        sys.exit()
+        raise requests.HTTPError(f'''Playlist creation request failed with
+        HTTP error {r.status_code}.
+        Expected status code 200-201''')
     playlist_id = r_playlist_data['id']
     return playlist_id
 
@@ -171,14 +185,16 @@ def add_tracks_to_spotify_playlist(spotify_playlist_id, track_list, user_access_
     r = requests.post(playlist_endpoint, headers=headers, data=playlist_payload_j)
     valid_request = r.status_code is 200 or 201
     if not valid_request:
-        print(f'Adding tracks to playlist failed with HTTP error {r.status_code}')
-        sys.exit()
+        raise requests.HTTPError(f'''Playlist update request failed with
+        HTTP error {r.status_code}.
+        Expected status code 200-201''')
 
 
-lfm_top_tracks = lfm_get_top_tracks(lfm_api_root, lfm_payload, pages, track_play_rank_lim)
-track_uri_list = get_spotify_track_uris_from(lfm_top_tracks)
-access_token = get_spotify_user_access_token()
-playlist_name = generated_playlist_name(period, date.today())
-playlist_id = create_new_sptfy_playlist_with_id(access_token, playlist_name)
-add_tracks_to_spotify_playlist(playlist_id, track_uri_list, access_token)
-print(f'Playlist was created with the name "{playlist_name}"')
+if __name__ == '__main__':
+    lfm_top_tracks = lfm_get_top_tracks(lfm_api_root, lfm_payload, pages, track_play_rank_lim)
+    track_uri_list = get_spotify_track_uris_from(lfm_top_tracks)
+    access_token = get_spotify_user_access_token()
+    playlist_name = generate_playlist_name(period, date.today())
+    playlist_id = create_new_sptfy_playlist_with_id(access_token, playlist_name)
+    add_tracks_to_spotify_playlist(playlist_id, track_uri_list, access_token)
+    print(f'Playlist was created with the name "{playlist_name}"')
